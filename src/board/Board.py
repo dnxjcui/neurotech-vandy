@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 from abc import ABC, abstractmethod
 from brainflow.board_shim import BoardShim, BrainFlowInputParams, LogLevels, BoardIds
-from brainflow.data_filter import DataFilter
+from brainflow.data_filter import DataFilter, WindowOperations, DetrendOperations
 
 
 class Board(ABC):
@@ -180,3 +180,57 @@ class Board(ABC):
         
         method = channel_methods[channel_type_lower]
         return method(self._board_id, preset)
+    
+    def get_sampling_rate(self, preset=None):
+        """
+        Get the sampling rate for the board.
+        
+        Args:
+            preset: BrainFlow preset (defaults to DEFAULT_PRESET if None)
+        
+        Returns:
+            int: Sampling rate in Hz
+        """
+        if self._board_id is None:
+            raise RuntimeError("Board ID not set. Board must be connected first.")
+        
+        if preset is None:
+            from brainflow.board_shim import BrainFlowPresets
+            preset = BrainFlowPresets.DEFAULT_PRESET
+        
+        return BoardShim.get_sampling_rate(self._board_id, preset)
+    
+    def get_band_power(self, data, low_freq, high_freq, preset=None):
+        """
+        Calculate band power for a given frequency range using Welch's method.
+        
+        Args:
+            data: 1D numpy array of EEG data
+            low_freq: Lower frequency bound (Hz)
+            high_freq: Upper frequency bound (Hz)
+            preset: BrainFlow preset (defaults to DEFAULT_PRESET if None)
+        
+        Returns:
+            float: Band power value
+        """
+        if self._board_id is None:
+            raise RuntimeError("Board ID not set. Board must be connected first.")
+        
+        if preset is None:
+            from brainflow.board_shim import BrainFlowPresets
+            preset = BrainFlowPresets.DEFAULT_PRESET
+        
+        sampling_rate = self.get_sampling_rate(preset)
+        nfft = DataFilter.get_nearest_power_of_two(sampling_rate)
+        
+        # Optional detrend
+        DataFilter.detrend(data, DetrendOperations.LINEAR.value)
+        
+        # Calculate PSD using Welch's method
+        psd = DataFilter.get_psd_welch(data, nfft, nfft // 2, sampling_rate,
+                                       WindowOperations.BLACKMAN_HARRIS.value)
+        
+        # Get band power
+        band_power = DataFilter.get_band_power(psd, low_freq, high_freq)
+        
+        return band_power
