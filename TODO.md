@@ -1,0 +1,2 @@
+-[ ] Need to add a way to send signals through serial to be picked up by Arduino
+-[ ] Finish up fourier / blink detection thresholding so we can test with Arduino
