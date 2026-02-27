@@ -222,7 +222,12 @@ class Board(ABC):
         
         sampling_rate = self.get_sampling_rate(preset)
         nfft = DataFilter.get_nearest_power_of_two(sampling_rate)
-        
+
+        if len(data) <= nfft:
+            raise ValueError(
+                f"Insufficient data for PSD: need >{nfft} samples, got {len(data)}"
+            )
+
         # Optional detrend
         DataFilter.detrend(data, DetrendOperations.LINEAR.value)
         

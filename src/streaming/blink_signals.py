@@ -4,6 +4,7 @@ Detects blinks from EEG data and outputs a signal to Serial port when a blink is
 The goal is to have an arduino pick up the value and perform an action.
 """
 
+import json
 import serial
 import time
 import numpy as np
@@ -14,6 +15,14 @@ import sys
 import os
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from board.Cyton import Cyton
+
+_CONFIG_PATH = os.path.join(os.path.dirname(__file__), '..', '..', 'configs', 'config.json')
+
+def load_config():
+    if os.path.exists(_CONFIG_PATH):
+        with open(_CONFIG_PATH) as f:
+            return json.load(f)
+    return {}
 
 
 class BlinkSignals:
@@ -105,7 +114,7 @@ class BlinkSignals:
         # Add blink indicator text widget
         self.blink_text = self.win.addLabel('', row=len(self.eeg_channels), col=0)
         self.blink_text.setText('')
-        self.blink_text.setStyleSheet("font-size: 48px; font-weight: bold; color: red;")
+        # self.blink_text.setStyleSheet("font-size: 48px; font-weight: bold; color: red;")
     
     def detect_blink(self, data, channel_idx):
         """
@@ -152,7 +161,11 @@ class BlinkSignals:
             
             if data.size == 0:
                 return
-            
+
+            nfft = DataFilter.get_nearest_power_of_two(self.sampling_rate)
+            if data.shape[1] <= nfft:
+                return
+
             # Process each EEG channel
             for count, channel in enumerate(self.eeg_channels):
                 channel_data = data[channel].copy()
@@ -176,7 +189,8 @@ class BlinkSignals:
                 if blink_detected:
                     self.blink_detected = True
                     self.blink_display_time = time.time() * 1000  # Current time in ms
-                    
+                    print("Blink detected")
+
                     # Send signal to Arduino
                     if self.arduino_serial and self.arduino_serial.is_open:
                         try:
@@ -207,11 +221,15 @@ class BlinkSignals:
 def main():
     """Main function to run blink detection."""
     import argparse
-    
+
+    config = load_config()
+
     parser = argparse.ArgumentParser(description='Blink Detection with EEG')
-    parser.add_argument('--board-serial', type=str, help='Serial port for Cyton board', default=None)
+    parser.add_argument('--board-serial', type=str, help='Serial port for Cyton board',
+                        default=config.get('cyton_serial_port'))
     parser.add_argument('--board-mac', type=str, help='MAC address for Cyton board', default=None)
-    parser.add_argument('--arduino-serial', type=str, help='Serial port for Arduino output', default=None)
+    parser.add_argument('--arduino-serial', type=str, help='Serial port for Arduino output',
+                        default=config.get('arduino_serial_port'))
     parser.add_argument('--blink-threshold', type=float, help='Blink detection threshold', default=2.0)
     parser.add_argument('--delta-low', type=float, help='Delta band lower frequency (Hz)', default=0.5)
     parser.add_argument('--delta-high', type=float, help='Delta band upper frequency (Hz)', default=4.0)
