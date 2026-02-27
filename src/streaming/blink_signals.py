@@ -34,7 +34,7 @@ class BlinkSignals:
     
     def __init__(self, board_serial_port=None, board_mac_address=None,
                  output_serial_port=None, blink_threshold=2.0,
-                 delta_low=0.5, delta_high=4.0, debug_log=None, channels=None):
+                 delta_low=0.5, delta_high=4.0, channels=None, refractory_period=0.2):
         """
         Initialize blink detection system.
 
@@ -45,19 +45,14 @@ class BlinkSignals:
             blink_threshold: Threshold multiplier for delta band power change to detect blink
             delta_low: Lower bound for delta band (Hz)
             delta_high: Upper bound for delta band (Hz)
-            debug_log: Path to write blink event log (CSV). None to disable.
             channels: List of 0-based indices into the EEG channel list to use.
                       None means use all channels.
+            refractory_period: Minimum seconds between blink detections (default 0.2).
         """
         self.blink_threshold = blink_threshold
         self.delta_low = delta_low
         self.delta_high = delta_high
-
-        # Debug log
-        self.debug_file = None
-        if debug_log:
-            self.debug_file = open(debug_log, 'w')
-            self.debug_file.write('timestamp,channel,delta_power,power_change\n')
+        self.refractory_period = refractory_period
 
         # Initialize board
         self.board = Cyton(serial_port=board_serial_port, mac_address=board_mac_address)
@@ -93,6 +88,7 @@ class BlinkSignals:
         self.blink_detected = False
         self.blink_display_time = 0
         self.blink_display_duration_ms = 500
+        self.last_blink_time = 0.0
         
         # Initialize GUI
         self.app = QtWidgets.QApplication([])
@@ -197,22 +193,19 @@ class BlinkSignals:
                 self.curves[count].setData(channel_data.tolist())
             
             # Detect blink across all selected channels; fire if any channel triggers
+            now = time.time()
+            in_refractory = (now - self.last_blink_time) < self.refractory_period
             any_blink = False
             for channel in self.eeg_channels:
-                blink_detected, delta_power, power_change = self.detect_blink(data, channel)
+                blink_detected, _, _ = self.detect_blink(data, channel)
                 if blink_detected:
                     any_blink = True
-                    ts = time.strftime('%Y-%m-%d %H:%M:%S')
-                    if self.debug_file:
-                        self.debug_file.write(
-                            f'{ts},{channel},{delta_power:.6f},{power_change:.6f}\n'
-                        )
-                        self.debug_file.flush()
 
-            if any_blink:
+            if any_blink and not in_refractory:
+                self.last_blink_time = now
                 self.blink_detected = True
-                self.blink_display_time = time.time() * 1000
-                print("Blink detected")
+                self.blink_display_time = now * 1000
+                print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Blink detected")
 
                 # Send signal to Arduino
                 if self.arduino_serial and self.arduino_serial.is_open:
@@ -238,8 +231,6 @@ class BlinkSignals:
         """Clean up resources."""
         if self.arduino_serial and self.arduino_serial.is_open:
             self.arduino_serial.close()
-        if self.debug_file:
-            self.debug_file.close()
         self.board.disconnect()
 
 
@@ -255,14 +246,14 @@ def main():
     parser.add_argument('--board-mac', type=str, help='MAC address for Cyton board', default=None)
     parser.add_argument('--arduino-serial', type=str, help='Serial port for Arduino output',
                         default=config.get('arduino_serial_port'))
-    parser.add_argument('--blink-threshold', type=float, help='Blink detection threshold', default=1.8)
+    parser.add_argument('--blink-threshold', type=float, help='Blink detection threshold', default=1.6)
     parser.add_argument('--delta-low', type=float, help='Delta band lower frequency (Hz)', default=0.5)
     parser.add_argument('--delta-high', type=float, help='Delta band upper frequency (Hz)', default=4.0)
-    parser.add_argument('--debug', type=str, metavar='FILE',
-                        help='Write blink events to a CSV log file (e.g. blink_log.csv)', default=None)
     parser.add_argument('--channels', type=str,
                         help='EEG channels to use, 1-based comma-separated (e.g. 1,2,3). Default: all.',
                         default=None)
+    parser.add_argument('--refractory-period', type=float,
+                        help='Minimum seconds between blink detections (default 0.2).', default=0.2)
 
     args = parser.parse_args()
 
@@ -278,8 +269,8 @@ def main():
             blink_threshold=args.blink_threshold,
             delta_low=args.delta_low,
             delta_high=args.delta_high,
-            debug_log=args.debug,
             channels=channels,
+            refractory_period=args.refractory_period,
         )
     except KeyboardInterrupt:
         print("Interrupted by user")
